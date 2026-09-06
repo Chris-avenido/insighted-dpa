@@ -88,15 +88,16 @@ file has been imported), treat this as first-time setup:
 3. For `docs/product/PRODUCT_OVERVIEW.md` specifically, ask the user for
    the essentials (purpose, target users, core objectives) rather than
    leaving it entirely blank — this file is too foundational to sit
-   empty.
+   empty. When generating or substantially updating `PRODUCT_OVERVIEW.md`, fill out every section defined in its template — including Non-goals, Constraints, User Journeys, Excluded Features, and Open Questions — not just Purpose, Users, and Objectives. If a section can't be filled from the code alone, mark it as `[needs user input]` rather than omitting it silently.
 4. For `docs/ux/` spec files, leave them templated and empty until
    either the user fills them in, or provides a finished app to extract
    them from (see the extraction workflow: read the source app's code
    section by section and populate the relevant template rather than
    generating from scratch).
 5. For `docs/living/` files, create them empty with just a header —
-   they'll populate naturally as work happens.
-6. Tell the user what was created and what still needs their input
+   they'll populate naturally as work happens. When generating or updating `BUSINESS_LOGIC.md` or `ARCHITECTURE.md`, document actual business rules and full structure rather than stopping at easy-to-find code mechanisms (constants, thresholds, lock IDs).
+6. Before presenting any generated or updated doc as complete, perform a self-check against its full template structure (or, if editing an existing file, against its existing section headers) and flag anything left thin or missing rather than presenting a partial doc as done.
+7. Tell the user what was created and what still needs their input
    before continuing with feature work.
 
 **If `docs/` already exists** (returning to an established project),
@@ -366,6 +367,12 @@ permissions, calculations, and edge cases that follow from the stated
 purpose, users, objectives, and features. If `BUSINESS_LOGIC.md` already
 exists, do not overwrite it — read it first and treat it as current
 state.
+
+When generating or substantially updating `PRODUCT_OVERVIEW.md`, `ARCHITECTURE.md`, or `BUSINESS_LOGIC.md`, enforce a completeness requirement: do not stop after documenting what's easy to find directly in code (constants, function names, literal thresholds, lock IDs). Also cover:
+
+- **For `PRODUCT_OVERVIEW.md`**: Fill out every section already defined in its template — including Non-goals, Constraints, User Journeys, Excluded Features, and Open Questions — not just Purpose, Users, and Objectives. If a section can't be filled from the code alone, mark it as `[needs user input]` rather than omitting it silently.
+- **For `BUSINESS_LOGIC.md`**: Document actual business rules, not just the mechanisms that implement them. For each domain, cover: what's validated and what isn't, what happens on invalid or unauthorized access, deadline/edge-case handling, and permission logic beyond simple role checks — not just the constants and thresholds involved.
+- **Self-check requirement**: Before presenting a generated or updated doc as complete, do a self-check against its full template structure (or, if editing an existing file, against its existing section headers) and flag anything left thin or missing rather than presenting a partial doc as done.
 
 As the project progresses, keep `docs/living/BUSINESS_LOGIC.md` up to
 date in the same session as any change that affects it:
