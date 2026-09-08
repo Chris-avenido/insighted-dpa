@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fullstack Shadcn Architect"
+  short_description: "Build clean shadcn UI and layered fullstack code"
+  default_prompt: "Use $fullstack-shadcn-architect to implement this feature with shadcn/ui and clean frontend-backend architecture."
