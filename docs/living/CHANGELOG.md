@@ -19,6 +19,14 @@ narrative.
 - **Initial commit: Relational auth schema migration, seed data, and
   JWT authentication service**
 
+## 2026-09-15 — Item-Level Position Breakdown & Filling-Up Rate (HQ Alignment)
+- Updated `PositionBreakdownCards.jsx` to break down items by **Position Title** (e.g., *Teacher I*, *Administrative Officer II*, *Teacher II*, *Teacher III*, *School Principal I*).
+- Chunked position titles into pages of 5 items per slide with proportional horizontal bars, formatted counts, and dot pill indicators matching HQ.
+- Added smooth wheel/trackpad scroll listener to seamlessly cycle through position title pages while reusing established HQ card styling.
+- Strictly partitioned `position_status` ('FILLED' vs. 'UNFILLED') without assuming NULL or unknown values are UNFILLED.
+- Changed dashboard completion percentage metric to official **Filling-Up Rate** $(\text{Total Filled} / (\text{Total Filled} + \text{Total Unfilled})) \times 100\%$, aligning denominator population exactly to the combined count of both cards.
+- Preserved all existing backend APIs, database schemas, chart visualizations, and modal drill-down workflows.
+
 ## 2026-09-15 — Personnel Audit Section Consolidation & UI Simplification
 - Removed redundant secondary "Finalized / Audited Personnel Records" section from `AuditDashboard.jsx`.
 - Integrated "Export CSV" directly into the Personnel Audit Main Panel header actions bar alongside dynamic record count badge.

@@ -1,27 +1,25 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 
 export function PositionBreakdownCards() {
-  const { records, kpis } = useApp();
+  const { records } = useApp();
 
   const [filledSlide, setFilledSlide] = useState(0);
   const [unfilledSlide, setUnfilledSlide] = useState(0);
 
-  // Split records into Filled and Unfilled subsets
+  // Split records strictly into Filled and Unfilled subsets
+  // Note: NULL, undefined, or unknown position_status are NOT assumed to be UNFILLED
   const { filledRecords, unfilledRecords } = useMemo(() => {
     const list = Array.isArray(records) ? records : [];
     const filled = [];
     const unfilled = [];
 
     list.forEach(r => {
-      const posStatus = (r.position_status || r['POSITION STATUS'] || '').toString().toUpperCase();
-      const itemStatus = (r.item_status || r.ITEM_STATUS || '').toString().toLowerCase();
-      const isAudited = r.is_audited === true;
+      const posStatus = (r.position_status || r['POSITION STATUS'] || '').toString().trim().toUpperCase();
 
-      // In DPA logic: position_status === 'FILLED' is filled; UNFILLED or default is unfilled
       if (posStatus === 'FILLED') {
         filled.push(r);
-      } else {
+      } else if (posStatus === 'UNFILLED') {
         unfilled.push(r);
       }
     });
@@ -29,123 +27,51 @@ export function PositionBreakdownCards() {
     return { filledRecords: filled, unfilledRecords: unfilled };
   }, [records]);
 
-  // Derive totals from records (with fallback to KPI summary object if records still hydrating)
-  const totalFilled = useMemo(() => {
-    if (filledRecords.length > 0) return filledRecords.length;
-    return kpis.auditedItems ?? kpis.totalAudited ?? 0;
-  }, [filledRecords, kpis]);
+  const totalFilled = filledRecords.length;
+  const totalUnfilled = unfilledRecords.length;
 
-  const totalUnfilled = useMemo(() => {
-    if (unfilledRecords.length > 0) return unfilledRecords.length;
-    return kpis.remainingItems ?? kpis.totalUnfilled ?? 0;
-  }, [unfilledRecords, kpis]);
-
-  // Helper to compute dynamic breakdowns for a given record list
-  const computeBreakdowns = (recordList, isFilled) => {
-    const totalCount = recordList.length || 1;
-
-    // Slide 0: Position Category Breakdown (Primary Default)
-    const categoryCounts = {
-      Teaching: 0,
-      'Non-Teaching': 0,
-      'Teaching-Related': 0
-    };
-
-    // Slide 1: Item Status Breakdown
-    const statusCounts = {
-      Regular: 0,
-      CTI: 0,
-      Others: 0
-    };
-
-    // Slide 2: Salary Grade Distribution
-    const sgCounts = {
-      'SG 1 - 10': 0,
-      'SG 11 - 15': 0,
-      'SG 16 - 24': 0,
-      'SG 25+': 0
-    };
-
-    // Slide 3: Aging / Classification Breakdown
-    const agingCounts = isFilled
-      ? { 'Regular Active': 0, 'Newly Appointed': 0, 'Verified Audited': 0 }
-      : { 'Newly Created (0-1 yr)': 0, 'Extended (1-2 yrs)': 0, 'Long-Term (2+ yrs)': 0 };
-
+  // Compute position title frequency breakdown chunked into slides of 5 items
+  const computePositionSlides = (recordList) => {
+    const counts = {};
     recordList.forEach(r => {
-      // 1. Category
-      const cat = r.position_category || r['POSITION CATEGORY'] || 'Teaching';
-      if (categoryCounts[cat] !== undefined) {
-        categoryCounts[cat]++;
-      } else if (cat.includes('Non')) {
-        categoryCounts['Non-Teaching']++;
-      } else if (cat.includes('Related')) {
-        categoryCounts['Teaching-Related']++;
-      } else {
-        categoryCounts['Teaching']++;
-      }
-
-      // 2. Status
-      const st = (r.item_status || r.ITEM_STATUS || 'Regular').toString();
-      if (st.toLowerCase().includes('cti')) statusCounts['CTI']++;
-      else if (st.toLowerCase().includes('reg')) statusCounts['Regular']++;
-      else statusCounts['Others']++;
-
-      // 3. Salary Grade
-      const sgNum = parseInt(r.sg || r.SG || 0, 10);
-      if (sgNum >= 25) sgCounts['SG 25+']++;
-      else if (sgNum >= 16) sgCounts['SG 16 - 24']++;
-      else if (sgNum >= 11) sgCounts['SG 11 - 15']++;
-      else sgCounts['SG 1 - 10']++;
-
-      // 4. Aging / Tenure
-      if (!isFilled) {
-        const aging = (r.vacancy_aging_status || '').toString().toLowerCase();
-        if (aging.includes('newly') || aging.includes('0-1')) agingCounts['Newly Created (0-1 yr)']++;
-        else if (aging.includes('extended') || aging.includes('1-2')) agingCounts['Extended (1-2 yrs)']++;
-        else agingCounts['Long-Term (2+ yrs)']++;
-      } else {
-        if (r.is_audited) agingCounts['Verified Audited']++;
-        else agingCounts['Regular Active']++;
-      }
+      const rawTitle = r.position_title || r['POSITION TITLE'] || 'Unspecified';
+      const title = String(rawTitle).trim() || 'Unspecified';
+      counts[title] = (counts[title] || 0) + 1;
     });
 
-    return [
-      {
-        title: 'CATEGORY',
-        items: [
-          { label: 'Teaching', count: categoryCounts['Teaching'] },
-          { label: 'Non-Teaching', count: categoryCounts['Non-Teaching'] },
-          { label: 'Teaching-Related', count: categoryCounts['Teaching-Related'] }
-        ]
-      },
-      {
-        title: 'ITEM STATUS',
-        items: [
-          { label: 'Regular Plantilla', count: statusCounts['Regular'] },
-          { label: 'CTI Position', count: statusCounts['CTI'] },
-          { label: 'Other Special', count: statusCounts['Others'] }
-        ]
-      },
-      {
-        title: 'SALARY GRADE',
-        items: [
-          { label: 'SG 1 - 10 (Sub-Prof)', count: sgCounts['SG 1 - 10'] },
-          { label: 'SG 11 - 15 (Prof)', count: sgCounts['SG 11 - 15'] },
-          { label: 'SG 16 - 24 (Senior)', count: sgCounts['SG 16 - 24'] },
-          { label: 'SG 25+ (Executive)', count: sgCounts['SG 25+'] }
-        ]
-      },
-      {
-        title: isFilled ? 'STATUS AUDIT' : 'VACANCY AGING',
-        items: Object.entries(agingCounts).map(([label, count]) => ({ label, count }))
-      }
-    ];
+    const sorted = Object.entries(counts)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+
+    if (sorted.length === 0) {
+      return [{
+        title: 'POSITION TITLE',
+        items: [{ label: 'No records available', count: 0 }],
+        maxOverall: 1
+      }];
+    }
+
+    const maxOverall = sorted[0]?.count || 1;
+    const pageSize = 5;
+    const slides = [];
+
+    // Limit to top 10 slides (up to 50 positions) to match HQ dot indicator layout
+    const maxItems = Math.min(sorted.length, 50);
+    for (let i = 0; i < maxItems; i += pageSize) {
+      slides.push({
+        title: 'POSITION TITLE',
+        items: sorted.slice(i, i + pageSize),
+        maxOverall
+      });
+    }
+
+    return slides;
   };
 
-  const filledSlides = useMemo(() => computeBreakdowns(filledRecords, true), [filledRecords]);
-  const unfilledSlides = useMemo(() => computeBreakdowns(unfilledRecords, false), [unfilledRecords]);
+  const filledSlides = useMemo(() => computePositionSlides(filledRecords), [filledRecords]);
+  const unfilledSlides = useMemo(() => computePositionSlides(unfilledRecords), [unfilledRecords]);
 
-  // Render helper for single Card
+  // Render helper for single Card reusing HQ styling and navigation
   const renderCard = ({
     title,
     subtitle = 'after audit',
@@ -156,21 +82,40 @@ export function PositionBreakdownCards() {
     onSlideChange
   }) => {
     const isEmerald = accentColor === 'emerald';
-    const activeData = slides[currentSlide] || slides[0];
-    const maxCount = Math.max(...activeData.items.map(i => i.count), 1);
-
     const totalSlides = slides.length;
+    const safeSlide = currentSlide < totalSlides ? currentSlide : 0;
+    const activeData = slides[safeSlide] || slides[0];
+    const maxCount = activeData.maxOverall || Math.max(...activeData.items.map(i => i.count), 1);
 
     const handlePrev = () => {
-      onSlideChange((currentSlide - 1 + totalSlides) % totalSlides);
+      onSlideChange((safeSlide - 1 + totalSlides) % totalSlides);
     };
 
     const handleNext = () => {
-      onSlideChange((currentSlide + 1) % totalSlides);
+      onSlideChange((safeSlide + 1) % totalSlides);
+    };
+
+    // Optional wheel listener for smooth scrolling through pages
+    const lastScrollTime = useRef(0);
+    const handleWheel = (e) => {
+      if (totalSlides <= 1) return;
+      const now = Date.now();
+      if (now - lastScrollTime.current < 250) return;
+      if (Math.abs(e.deltaY) > 20 || Math.abs(e.deltaX) > 20) {
+        lastScrollTime.current = now;
+        if (e.deltaY > 0 || e.deltaX > 0) {
+          handleNext();
+        } else {
+          handlePrev();
+        }
+      }
     };
 
     return (
-      <div className="card-glass relative rounded-2xl p-5 md:p-6 border border-slate-200/90 dark:border-slate-700/90 shadow-sm flex flex-col justify-between overflow-hidden group">
+      <div
+        onWheel={handleWheel}
+        className="card-glass relative rounded-2xl p-5 md:p-6 border border-slate-200/90 dark:border-slate-700/90 shadow-sm flex flex-col justify-between overflow-hidden group select-none"
+      >
         <div className="specular-sheen"></div>
 
         {/* Left vertical accent border */}
@@ -208,15 +153,18 @@ export function PositionBreakdownCards() {
           </div>
 
           {/* Breakdown Rows */}
-          <div className="space-y-2.5 min-h-[96px] flex flex-col justify-center">
+          <div className="space-y-2.5 min-h-[148px] flex flex-col justify-start">
             {activeData.items.map((item, idx) => {
               const count = item.count || 0;
               const barPercent = Math.min(100, Math.max(4, Math.round((count / maxCount) * 100)));
 
               return (
                 <div key={idx} className="flex items-center justify-between gap-3 text-xs md:text-sm">
-                  {/* Category Label */}
-                  <span className="font-bold text-slate-700 dark:text-slate-200 w-28 md:w-36 flex-shrink-0 truncate" title={item.label}>
+                  {/* Position Title Label */}
+                  <span
+                    className="font-bold text-slate-700 dark:text-slate-200 w-32 md:w-44 flex-shrink-0 truncate"
+                    title={item.label}
+                  >
                     {item.label}
                   </span>
 
@@ -249,7 +197,7 @@ export function PositionBreakdownCards() {
             type="button"
             onClick={handlePrev}
             className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-slate-100 dark:bg-slate-700/60 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 flex items-center justify-center text-xs transition cursor-pointer"
-            title="Previous breakdown"
+            title="Previous positions"
           >
             ‹
           </button>
@@ -257,7 +205,7 @@ export function PositionBreakdownCards() {
           {/* Indicator Dots */}
           <div className="flex items-center gap-1.5 px-1">
             {slides.map((_, idx) => {
-              const isActive = idx === currentSlide;
+              const isActive = idx === safeSlide;
               return (
                 <button
                   key={idx}
@@ -270,7 +218,7 @@ export function PositionBreakdownCards() {
                         : 'w-4 h-1.5 bg-rose-500 shadow-xs'
                       : 'w-1.5 h-1.5 bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500'
                   }`}
-                  title={`Slide ${idx + 1}`}
+                  title={`Page ${idx + 1}`}
                 />
               );
             })}
@@ -281,7 +229,7 @@ export function PositionBreakdownCards() {
             type="button"
             onClick={handleNext}
             className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-slate-100 dark:bg-slate-700/60 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 flex items-center justify-center text-xs transition cursor-pointer"
-            title="Next breakdown"
+            title="Next positions"
           >
             ›
           </button>

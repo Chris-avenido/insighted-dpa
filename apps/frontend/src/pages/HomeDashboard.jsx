@@ -80,6 +80,28 @@ export const HomeDashboard = () => {
   const remaining = kpis.remainingItems ?? kpiObj.remainingItems ?? Math.max(0, total - audited);
   const percent = kpis.completionPercentage ?? kpiObj.completionPercentage ?? (total > 0 ? parseFloat(((audited / total) * 100).toFixed(1)) : 0);
 
+  // Compute Filling-Up Rate using exact item population: Total Filled + Total Unfilled
+  // Note: NULL or unknown position_status are NOT automatically classified as UNFILLED
+  const list = Array.isArray(records) ? records : [];
+  let filledCount = 0;
+  let unfilledCount = 0;
+
+  list.forEach(r => {
+    const posStatus = (r.position_status || r['POSITION STATUS'] || '').toString().trim().toUpperCase();
+    if (posStatus === 'FILLED') {
+      filledCount++;
+    } else if (posStatus === 'UNFILLED') {
+      unfilledCount++;
+    }
+  });
+
+  const totalFilled = filledCount;
+  const totalUnfilled = unfilledCount;
+  const totalPopulation = totalFilled + totalUnfilled;
+  const fillingUpRate = totalPopulation > 0
+    ? parseFloat(((totalFilled / totalPopulation) * 100).toFixed(1))
+    : 0;
+
   // Vacancy Aging distribution chart data
   const agingData = kpis.vacancyAgingDistribution || kpiObj.vacancyAgingDistribution || [];
   const agingLabels = agingData.length > 0 ? agingData.map(d => d.status || d.vacancy_aging_status || 'Unspecified') : ['No Data'];
@@ -206,21 +228,21 @@ export const HomeDashboard = () => {
       {/* Position Breakdown KPI Cards (Filled & Unfilled with Scrollable Graph Breakdown) */}
       <PositionBreakdownCards />
 
-      {/* Completion Rate Quick Status */}
+      {/* Filling-Up Rate Quick Status */}
       <div className="card-glass px-5 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></div>
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
           <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-            Overall Audit Accomplishment Rate: <strong className="text-slate-900 dark:text-white font-extrabold text-sm ml-1">{percent}%</strong>
+            Filling-Up Rate: <strong className="text-slate-900 dark:text-white font-extrabold text-sm ml-1">{fillingUpRate}%</strong>
           </span>
           <span className="text-xs text-slate-400 font-medium">
-            ({Number(audited).toLocaleString()} of {Number(total).toLocaleString()} monitored items audited)
+            ({Number(totalFilled).toLocaleString()} filled of {Number(totalPopulation).toLocaleString()} total plantilla items)
           </span>
         </div>
         <div className="w-full sm:w-64 bg-slate-100 dark:bg-slate-700/60 rounded-full h-2 overflow-hidden flex-shrink-0">
           <div
-            className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-500"
-            style={{ width: `${percent}%` }}
+            className="bg-gradient-to-r from-emerald-500 to-teal-500 h-full rounded-full transition-all duration-500"
+            style={{ width: `${fillingUpRate}%` }}
           />
         </div>
       </div>
