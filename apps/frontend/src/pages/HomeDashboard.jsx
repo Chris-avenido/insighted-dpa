@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { CategoryItemsModal } from '../components/CategoryItemsModal';
+import { PositionBreakdownCards } from '../components/PositionBreakdownCards';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -202,32 +203,25 @@ export const HomeDashboard = () => {
         </button>
       </div>
 
-      {/* 4 Summary KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="card-glass p-5">
-          <div className="specular-sheen"></div>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block relative z-10">Total Unfilled Items</span>
-          <strong className="text-3xl font-bold text-slate-800 dark:text-white block mt-1 relative z-10">{Number(total).toLocaleString()}</strong>
+      {/* Position Breakdown KPI Cards (Filled & Unfilled with Scrollable Graph Breakdown) */}
+      <PositionBreakdownCards />
+
+      {/* Completion Rate Quick Status */}
+      <div className="card-glass px-5 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></div>
+          <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+            Overall Audit Accomplishment Rate: <strong className="text-slate-900 dark:text-white font-extrabold text-sm ml-1">{percent}%</strong>
+          </span>
+          <span className="text-xs text-slate-400 font-medium">
+            ({Number(audited).toLocaleString()} of {Number(total).toLocaleString()} monitored items audited)
+          </span>
         </div>
-        <div className="card-glass p-5">
-          <div className="specular-sheen"></div>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block relative z-10">Audited Items</span>
-          <strong className="text-3xl font-bold text-slate-800 dark:text-white block mt-1 relative z-10">{Number(audited).toLocaleString()}</strong>
-        </div>
-        <div className="card-glass p-5">
-          <div className="specular-sheen"></div>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block relative z-10">Remaining Items</span>
-          <strong className="text-3xl font-bold text-slate-800 dark:text-white block mt-1 relative z-10">{Number(remaining).toLocaleString()}</strong>
-        </div>
-        <div className="card-glass p-5">
-          <div className="specular-sheen"></div>
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block relative z-10">Completion Progress</span>
-          <div className="flex items-center gap-2 mt-2 relative z-10">
-            <strong className="text-3xl font-bold text-slate-800 dark:text-white">{percent}%</strong>
-            <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
-              <div className="bg-blue-500 h-full transition-all duration-300" style={{ width: `${percent}%` }}></div>
-            </div>
-          </div>
+        <div className="w-full sm:w-64 bg-slate-100 dark:bg-slate-700/60 rounded-full h-2 overflow-hidden flex-shrink-0">
+          <div
+            className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-500"
+            style={{ width: `${percent}%` }}
+          />
         </div>
       </div>
 

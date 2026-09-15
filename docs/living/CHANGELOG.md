@@ -19,8 +19,18 @@ narrative.
 - **Initial commit: Relational auth schema migration, seed data, and
   JWT authentication service**
 
+## 2026-09-15 — Filled & Unfilled Position Breakdown Cards (HQ-Style Carousel)
+- Implemented `PositionBreakdownCards` component with dynamic Teaching, Non-Teaching, and Teaching-Related graph breakdowns.
+- Added scrollable multi-slide carousel (`‹ • • • • ›`) supporting Category, Status, Salary Grade, and Aging dimensions.
+- Integrated emerald/rose accent cards and live accomplishment summary on `HomeDashboard.jsx`.
+
+## 2026-09-15 — System Preservation & Non-Regression Policy Established
+- Created single authoritative `SYSTEM_PRESERVATION_POLICY.md` documenting verified repository inventory, 18 core non-regression principles, and protected domain invariants.
+- Added root integration files `AGENTS.md` and `GEMINI.md` referencing the authoritative policy without duplicating or conflicting.
+- Added synchronized rule integration layers `.agent/rules/system-preservation-policy.md`.
+- Created active Antigravity skill `.agent/skills/dpa-system-guardian/SKILL.md` with pre-modification impact checklist and invariant reference tables.
+
 ## 2026-09-06 — Restructured docs folder & added self-protection rules
-- Reorganized `docs/` into `product/`, `ux/`, and `living/` subfolders per `CLAUDE.md` standard.
 - Removed obsolete `docs/SCOPE.md`.
 - Updated relative paths in `docs/ux/DESIGN_CONTRACT.md`.
 - Created `.agent/workflows/sync-specs.md` global audit workflow file.
