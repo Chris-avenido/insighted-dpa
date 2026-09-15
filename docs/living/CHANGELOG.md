@@ -19,6 +19,17 @@ narrative.
 - **Initial commit: Relational auth schema migration, seed data, and
   JWT authentication service**
 
+## 2026-09-15 — Personnel Audit Section Consolidation & UI Simplification
+- Removed redundant secondary "Finalized / Audited Personnel Records" section from `AuditDashboard.jsx`.
+- Integrated "Export CSV" directly into the Personnel Audit Main Panel header actions bar alongside dynamic record count badge.
+- Simplified edit modals (`RemarksModal` and `RowEditModal`) to point directly to main staged edits state, retiring decoupled finalized staging state and obsolete confirmation modals.
+- All records (audited and unaudited) continue to be accessible, filtered, sorted, edited, and exported from the single unified Main Panel table.
+
+## 2026-09-15 — Personnel Audit Main Panel All-Rows Display
+- Updated `filteredActiveRecords` in `AuditDashboard.jsx` to show all personnel audit records regardless of whether `is_audited` is TRUE or FALSE.
+- Added explicit green `Audited` status badge in the Submission Status column for completed records.
+- Preserved category filtering (Teaching, Non-Teaching, Teaching-Related tabs), pagination, column filtering, and the secondary Finalized table.
+
 ## 2026-09-15 — Filled & Unfilled Position Breakdown Cards (HQ-Style Carousel)
 - Implemented `PositionBreakdownCards` component with dynamic Teaching, Non-Teaching, and Teaching-Related graph breakdowns.
 - Added scrollable multi-slide carousel (`‹ • • • • ›`) supporting Category, Status, Salary Grade, and Aging dimensions.
