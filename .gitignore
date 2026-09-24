@@ -48,3 +48,7 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Database backups (keep dump archives local-only)
+database/backups/
+*.sql.gz
