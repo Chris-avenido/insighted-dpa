@@ -10,11 +10,13 @@ import shutil
 # Handle Windows console encoding for emojis
 if sys.platform == "win32":
     import codecs
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # --- CONFIGURATION ---
+APP_NAME = "insighted-dpa"
+APP_SUBPATH = "/insighted-dpa/"
 SERVER_IP = "20.24.58.49"
-SERVER_DIR = "/mnt/insighted-dpa"
+SERVER_DIR = f"/mnt/{APP_NAME}"
 HTML_DIR = "/var/www/html/InsightED-ROSDO/insighted-dpa"
 USER = "Administrator1"
 TAR_FILE = "dpa-deploy.tmp.tar.gz"
@@ -64,20 +66,22 @@ def recycle_local_archives():
     if recycled_count > 0:
         success(f"Recycled {recycled_count} local archive file(s).")
 
-def run_command(cmd, capture=False, timeout=90, retries=5, delay=3):
+def run_command(cmd, capture=False, timeout=90, retries=5, delay=3, env=None, check=True):
     cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
-    
-    is_network = "ssh" in cmd_str or "scp" in cmd_str
-    max_attempts = retries if is_network else 1
+    is_network = isinstance(cmd, list) and cmd and cmd[0] in ("ssh", "scp")
+    max_attempts = max(retries, 5) if is_network else retries
 
     for attempt in range(1, max_attempts + 1):
         if not capture:
             prefix = f"[Attempt {attempt}/{max_attempts}] " if is_network else ""
             print(f"{CYAN}> {prefix}Running: {cmd_str}{NC}", flush=True)
         try:
+            # When cmd is a list, shell=False bypasses Windows cmd.exe so multi-line
+            # remote scripts with quotes/&& reach ssh.exe intact as one remote argument.
             result = subprocess.run(
-                cmd, shell=True, capture_output=capture, text=True, 
-                timeout=timeout, stdin=subprocess.DEVNULL
+                cmd, shell=isinstance(cmd, str), check=False, text=True, 
+                capture_output=capture, timeout=timeout, stdin=subprocess.DEVNULL,
+                encoding='utf-8', errors='replace', env=env
             )
             if result.returncode == 0:
                 return result
@@ -86,22 +90,25 @@ def run_command(cmd, capture=False, timeout=90, retries=5, delay=3):
         except subprocess.TimeoutExpired:
             if attempt < max_attempts:
                 warn(f"Command timed out after {timeout}s. Retrying in {delay}s...")
+            result = None
         
         if attempt < max_attempts:
             time.sleep(delay)
 
-    if not capture:
+    if check:
         error(f"Command failed after {max_attempts} attempts: {cmd_str}")
-    return subprocess.CompletedProcess(cmd, 1, "", "Failed after retries")
+        sys.exit(1)
+    return result
+
+def ssh_base():
+    return ["ssh"] + SSH_OPTS + [f"{USER}@{SERVER_IP}"]
 
 def pre_flight_audit():
     print(f"\n{YELLOW}🔍 Phase 1: Pre-flight Audit{NC}", flush=True)
-    ssh_target = f"{USER}@{SERVER_IP}"
-    ssh_base = ["ssh"] + SSH_OPTS + [ssh_target]
     
     info("Checking remote disk space...")
-    res = run_command(ssh_base + ["df -h / | tail -1"], capture=True, timeout=20, retries=3)
-    if res.returncode == 0:
+    res = run_command(ssh_base() + ["df -h / | tail -1"], capture=True, timeout=20, retries=3, check=False)
+    if res and res.returncode == 0:
         parts = res.stdout.split()
         if len(parts) >= 5:
             usage = parts[4].replace('%', '')
@@ -112,43 +119,41 @@ def pre_flight_audit():
         warn("Could not check disk space (transient network glitch). Skipping...")
     
     info(f"Checking if port {PORT} is occupied...")
-    res = run_command(ssh_base + [f"ss -tulpn | grep :{PORT} || true"], capture=True, timeout=20, retries=3)
-    if res.returncode == 0 and res.stdout.strip():
+    res = run_command(ssh_base() + [f"ss -tulpn | grep :{PORT} || true"], capture=True, timeout=20, retries=3, check=False)
+    if res and res.returncode == 0 and res.stdout.strip():
         info(f"Port {PORT} is active for PM2 backend.")
     else:
         info(f"Port {PORT} ready.")
 
 def prepare_remote():
     print(f"\n{YELLOW}🧹 Phase 2: Preparing remote directory {SERVER_DIR} & {HTML_DIR}...{NC}", flush=True)
-    ssh_target = f"{USER}@{SERVER_IP}"
     prep_cmd = (
         f"sudo mkdir -p {SERVER_DIR} {HTML_DIR} && "
         f"sudo chown -R {USER}:{USER} {SERVER_DIR} {HTML_DIR} && "
         f"mkdir -p {SERVER_DIR}/logs && "
         f"rm -f {SERVER_DIR}/*.tar.gz {SERVER_DIR}/*.tgz 2>/dev/null || true"
     )
-    ssh_cmd = ["ssh"] + SSH_OPTS + [ssh_target, prep_cmd]
-    run_command(ssh_cmd, retries=5)
+    run_command(ssh_base() + [prep_cmd], retries=5)
     success("Remote directory prepared and old archive files recycled.")
 
 def post_flight_verify():
     print(f"\n{YELLOW}🔍 Phase 5: Post-flight Verification & Auto-Revive{NC}", flush=True)
-    ssh_target = f"{USER}@{SERVER_IP}"
     
     info("Checking PM2 status...")
-    show_cmd = ["ssh"] + SSH_OPTS + [ssh_target, f"pm2 show {PM2_NAME} | grep status"]
-    res = run_command(show_cmd, capture=True, retries=3)
-    print(res.stdout, flush=True)
+    show_cmd = ssh_base() + [f"pm2 show {PM2_NAME} | grep status"]
+    res = run_command(show_cmd, capture=True, retries=3, check=False)
+    if res and res.stdout:
+        print(res.stdout, flush=True)
 
-    if "errored" in res.stdout or "stopped" in res.stdout:
+    if res and ("errored" in res.stdout or "stopped" in res.stdout):
         warn("PM2 process detected in errored/stopped state! Triggering Auto-Revive restart...")
-        revive_cmd = ["ssh"] + SSH_OPTS + [ssh_target, f"pm2 restart {PM2_NAME} --update-env"]
-        run_command(revive_cmd, retries=3)
+        revive_cmd = ssh_base() + [f"pm2 restart {PM2_NAME} --update-env"]
+        run_command(revive_cmd, retries=3, check=False)
         success("Auto-Revive triggered for PM2 process.")
     
     info(f"Checking backend endpoint (port {PORT})...")
-    health_cmd = ["ssh"] + SSH_OPTS + [ssh_target, f"curl -sf http://127.0.0.1:{PORT}/ || true"]
-    run_command(health_cmd, capture=False, retries=3)
+    health_cmd = ssh_base() + [f"curl -sf http://127.0.0.1:{PORT}/ || true"]
+    run_command(health_cmd, capture=False, retries=3, check=False)
 
 def main():
     start_time = time.time()
@@ -169,7 +174,14 @@ def main():
         recycle_local_archives()
         
         info("Building Vite React frontend...")
-        run_command("npm run build --prefix apps/frontend", retries=1)
+        build_env = os.environ.copy()
+        build_env["VITE_BASE_PATH"] = APP_SUBPATH
+        build_env["VITE_API_URL"] = f"{APP_SUBPATH}api"
+        if sys.platform == "win32":
+            run_command(f"set VITE_BASE_PATH={APP_SUBPATH}&& set VITE_API_URL={APP_SUBPATH}api&& npm run build -w apps/frontend", env=build_env)
+        else:
+            run_command(f"VITE_BASE_PATH='{APP_SUBPATH}' VITE_API_URL='{APP_SUBPATH}api' npm run build -w apps/frontend", env=build_env)
+        run_command("npm run build:css")
         
         info("Syncing build dist outputs...")
         if os.path.exists("apps/frontend/dist"):
@@ -204,10 +216,9 @@ def main():
 
         # 4. Upload & Deploy with Auto-Revive Retry Loop
         print(f"\n{YELLOW}📤 Phase 4: Uploading archive and executing remote deploy in {SERVER_DIR}...{NC}", flush=True)
-        ssh_target = f"{USER}@{SERVER_IP}"
         
-        scp_cmd = ["scp", "-q"] + SSH_OPTS + [TAR_FILE, f"{ssh_target}:{SERVER_DIR}/"]
-        run_command(scp_cmd, retries=5)
+        scp_cmd = ["scp", "-q"] + SSH_OPTS + [TAR_FILE, f"{USER}@{SERVER_IP}:{SERVER_DIR}/"]
+        run_command(scp_cmd, retries=5, timeout=180)
         
         ecosystem_remote_path = f"{SERVER_DIR}/{ECOSYSTEM_CONFIG}"
         remote_setup = (
@@ -216,7 +227,12 @@ def main():
             f"tar -xzf {TAR_FILE} && "
             f"rm -f {SERVER_DIR}/{TAR_FILE} {SERVER_DIR}/*.tar.gz {SERVER_DIR}/*.tgz 2>/dev/null || true && "
             f"sudo chown -R {USER}:{USER} {SERVER_DIR} {HTML_DIR} && "
+            f"mkdir -p {SERVER_DIR}/dist {SERVER_DIR}/assets {HTML_DIR}/assets && "
+            f"find {SERVER_DIR}/dist -mindepth 1 -delete 2>/dev/null || true; "
+            f"rm -rf {SERVER_DIR}/assets/* {HTML_DIR}/assets/* 2>/dev/null || true; "
             f"if [ -d {SERVER_DIR}/apps/frontend/dist ] && [ \"$(ls -A {SERVER_DIR}/apps/frontend/dist 2>/dev/null)\" ]; then "
+            f"  cp -r {SERVER_DIR}/apps/frontend/dist/. {SERVER_DIR}/dist/; "
+            f"  cp -r {SERVER_DIR}/apps/frontend/dist/. {SERVER_DIR}/; "
             f"  sudo cp -r {SERVER_DIR}/apps/frontend/dist/. {HTML_DIR}/; "
             f"fi && "
             "export PATH=$PATH:/usr/local/bin:/home/Administrator1/.local/share/pnpm; "
@@ -224,10 +240,10 @@ def main():
             "npm install --omit=dev --legacy-peer-deps --prefer-offline 2>&1 | tail -n 10 && "
             f"pm2 flush {PM2_NAME} 2>/dev/null || true; "
             f"pm2 delete {PM2_NAME} 2>/dev/null || true; "
-            f"pm2 start {ecosystem_remote_path} --update-env && "
+            f"pm2 start {ecosystem_remote_path} --update-env && pm2 save && "
             f"rm -f {SERVER_DIR}/{TAR_FILE} {SERVER_DIR}/*.tar.gz {SERVER_DIR}/*.tgz 2>/dev/null || true"
         )
-        ssh_deploy_cmd = ["ssh"] + SSH_OPTS + [ssh_target, remote_setup]
+        ssh_deploy_cmd = ssh_base() + [remote_setup]
         run_command(ssh_deploy_cmd, retries=5, timeout=180)
         success("Remote setup complete and archive files recycled.")
 
