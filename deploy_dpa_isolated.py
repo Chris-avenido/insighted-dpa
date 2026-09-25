@@ -4,6 +4,7 @@ import sys
 import time
 import tarfile
 import subprocess
+import shutil
 
 # Handle Windows console encoding for emojis/box-drawing chars from remote PM2 output
 if sys.platform == "win32":
@@ -15,13 +16,14 @@ APP_SUBPATH = "/insighted-dpa/"        # Nginx location prefix this app is serve
 REMOTE_USER = "Administrator1"
 REMOTE_HOST = "20.24.58.49"
 REMOTE_DIR = f"/mnt/{APP_NAME}"
+HTML_DIR = "/var/www/html/InsightED-ROSDO/insighted-dpa"  # Updated deployment target directory
 PORT = 5040                            # Matches the upstream dpa_backend port in Nginx
 PM2_NAME = "insighted-dpa-backend"
 ECOSYSTEM_CONFIG = "ecosystem.dpa.config.cjs"
 ARCHIVE_NAME = f"{APP_NAME}-deploy.tmp.tar.gz"
 
 # Strict no-Nginx-touch policy: this script never edits /etc/nginx or reloads/
-# restarts the Nginx service. Everything it does is scoped to REMOTE_DIR and
+# restarts the Nginx service. Everything it does is scoped to REMOTE_DIR, HTML_DIR and
 # the single PM2_NAME process.
 SSH_OPTS = [
     "-o", "BatchMode=yes",
@@ -51,6 +53,20 @@ def info(msg): print(f"{CYAN}[INFO] {msg}{NC}", flush=True)
 def success(msg): print(f"{GREEN}[SUCCESS] {msg}{NC}", flush=True)
 def warn(msg): print(f"{YELLOW}[WARN] {msg}{NC}", flush=True)
 def error(msg): print(f"{RED}[ERROR] {msg}{NC}", flush=True)
+
+def recycle_local_archives():
+    """Recycles/removes temporary or leftover local tar.gz archives to save space."""
+    recycled_count = 0
+    for item in os.listdir("."):
+        if item.endswith(".tar.gz") or item.endswith(".tgz"):
+            try:
+                os.remove(item)
+                recycled_count += 1
+                info(f"Recycled local archive: {item}")
+            except Exception as e:
+                warn(f"Could not recycle local archive {item}: {e}")
+    if recycled_count > 0:
+        success(f"Recycled {recycled_count} local archive file(s).")
 
 def run_command(cmd, capture=False, timeout=90, retries=1, delay=5, env=None, check=True):
     """Runs cmd, which may be a plain string (simple local commands like
@@ -104,11 +120,6 @@ def pre_flight_audit():
     hoping the later transfer works) — mirrors the "echo SSH_OK" pattern used
     across this team's other deploy scripts. Read-only; changes nothing."""
     info("Phase 1: Pre-flight audit")
-    # String form (shell=True) — npm/node are .cmd wrapper scripts on Windows,
-    # which CreateProcess (used when shell=False) can't resolve without going
-    # through cmd.exe. List form is reserved for ssh/scp below, which need to
-    # bypass cmd.exe for the opposite reason. run_command() exits the process
-    # itself (check=True by default) if either of these isn't found/fails.
     run_command("npm -v")
     run_command("node -v")
 
@@ -118,8 +129,6 @@ def pre_flight_audit():
         error("SSH connectivity check failed — did not receive expected response.")
         sys.exit(1)
     success("SSH connectivity confirmed.")
-
-import shutil
 
 def build_local_assets():
     """Phase 2: Local build, entirely on this machine — nothing here touches
@@ -173,6 +182,8 @@ def package_archive():
     """Phase 3: Bundle backend code, the freshly-built apps/frontend/dist,
     public/, and config into one tarball."""
     info("Phase 3: Packaging archive")
+    recycle_local_archives()
+    
     existing_includes = [item for item in INCLUDE if os.path.exists(item)]
     missing = [item for item in INCLUDE if item not in existing_includes]
     if missing:
@@ -188,24 +199,15 @@ def package_archive():
 
 def deploy_remote():
     """Phase 4: Transfer + atomic remote execution. Scoped entirely to
-    REMOTE_DIR and PM2_NAME. Never touches /etc/nginx or reloads/restarts the
+    REMOTE_DIR, HTML_DIR, and PM2_NAME. Never touches /etc/nginx or reloads/restarts the
     Nginx service — strictly no-Nginx-touch.
-
-    The critical fix here vs. earlier attempts: Nginx's location block for
-    this app serves static files from a PERSISTENT REMOTE_DIR/dist/ directory
-    (alias /mnt/insighted-dpa/dist/). Earlier revisions either never populated
-    that directory, or (briefly) replaced it wholesale from the local machine —
-    both wrong. The safe pattern (matching this team's other working deploy
-    scripts) is: on the REMOTE side, after extraction, clear dist/'s CONTENTS
-    (not the directory itself — removing/recreating the folder while Nginx
-    holds an open handle to it can stall or crash requests) and copy the fresh
-    apps/frontend/dist build into it in place.
     """
-    info(f"Phase 4: Preparing {REMOTE_DIR} and transferring archive")
+    info(f"Phase 4: Preparing {REMOTE_DIR}, {HTML_DIR}, and transferring archive")
     prep_cmd = (
-        f"sudo mkdir -p {REMOTE_DIR} /var/www/html/insighted-dpa && "
-        f"sudo chown -R {REMOTE_USER}:{REMOTE_USER} {REMOTE_DIR} /var/www/html/insighted-dpa && "
-        f"mkdir -p {REMOTE_DIR}/logs {REMOTE_DIR}/dist"
+        f"sudo mkdir -p {REMOTE_DIR} {HTML_DIR} && "
+        f"sudo chown -R {REMOTE_USER}:{REMOTE_USER} {REMOTE_DIR} {HTML_DIR} && "
+        f"mkdir -p {REMOTE_DIR}/logs {REMOTE_DIR}/dist && "
+        f"rm -f {REMOTE_DIR}/*.tar.gz {REMOTE_DIR}/*.tgz 2>/dev/null || true"
     )
     run_command(ssh_base() + [prep_cmd])
 
@@ -217,16 +219,18 @@ def deploy_remote():
         f"cd {REMOTE_DIR} && "
         f"pm2 stop {PM2_NAME} 2>/dev/null || true && "
         f"tar -xzf {ARCHIVE_NAME} && "
-        f"sudo chown -R {REMOTE_USER}:{REMOTE_USER} {REMOTE_DIR} && "
+        # Recycle the archive immediately upon extraction
+        f"rm -f {REMOTE_DIR}/{ARCHIVE_NAME} {REMOTE_DIR}/*.tar.gz {REMOTE_DIR}/*.tgz 2>/dev/null || true && "
+        f"sudo chown -R {REMOTE_USER}:{REMOTE_USER} {REMOTE_DIR} {HTML_DIR} && "
         # Clear dist/'s contents in place, never the folder itself, then copy
-        # the fresh frontend build in. Safe to re-run every deploy.
-        f"mkdir -p {REMOTE_DIR}/dist {REMOTE_DIR}/assets /var/www/html/insighted-dpa/assets && "
+        # the fresh frontend build into remote dist and HTML_DIR. Safe to re-run every deploy.
+        f"mkdir -p {REMOTE_DIR}/dist {REMOTE_DIR}/assets {HTML_DIR}/assets && "
         f"find {REMOTE_DIR}/dist -mindepth 1 -delete && "
-        f"rm -rf {REMOTE_DIR}/assets/* /var/www/html/insighted-dpa/assets/* 2>/dev/null || true; "
+        f"rm -rf {REMOTE_DIR}/assets/* {HTML_DIR}/assets/* 2>/dev/null || true; "
         f"if [ -d {REMOTE_DIR}/apps/frontend/dist ] && [ \"$(ls -A {REMOTE_DIR}/apps/frontend/dist 2>/dev/null)\" ]; then "
         f"  cp -r {REMOTE_DIR}/apps/frontend/dist/. {REMOTE_DIR}/dist/; "
         f"  cp -r {REMOTE_DIR}/apps/frontend/dist/. {REMOTE_DIR}/; "
-        f"  sudo cp -r {REMOTE_DIR}/apps/frontend/dist/. /var/www/html/insighted-dpa/; "
+        f"  sudo cp -r {REMOTE_DIR}/apps/frontend/dist/. {HTML_DIR}/; "
         f"fi && "
         "export PATH=$PATH:/usr/local/bin:/home/Administrator1/.local/share/pnpm; "
         "echo '-> Installing production monorepo dependencies...' && "
@@ -234,20 +238,11 @@ def deploy_remote():
         f"pm2 flush {PM2_NAME} 2>/dev/null || true; "
         f"pm2 delete {PM2_NAME} 2>/dev/null || true; "
         f"pm2 start {ecosystem_remote_path} --update-env && pm2 save && "
-        f"rm -f {REMOTE_DIR}/{ARCHIVE_NAME}"
+        f"rm -f {REMOTE_DIR}/{ARCHIVE_NAME} {REMOTE_DIR}/*.tar.gz {REMOTE_DIR}/*.tgz 2>/dev/null || true"
     )
-    # CRITICAL: remote_script is its own single list element, not interpolated
-    # into a shell string. subprocess.run() with a list on Windows calls
-    # CreateProcess directly (no cmd.exe), so this whole &&-joined string
-    # reaches the local ssh.exe as one intact argument; ssh then sends that as
-    # one command to the REMOTE shell — the only place these steps should be
-    # split apart. A previous version of this script built the command as an
-    # interpolated string, which cmd.exe silently mangled: it split on
-    # embedded characters and ran fragments as separate *local* Windows
-    # commands, so the real remote steps never executed at all.
     ssh_cmd = ["ssh"] + SSH_OPTS + [f"{REMOTE_USER}@{REMOTE_HOST}", remote_script]
     run_command(ssh_cmd, timeout=180)
-    success("Remote setup complete.")
+    success("Remote setup complete and remote archive files recycled.")
 
 def post_flight_verify():
     """Phase 5: Health check + auto-revive if PM2 shows the process errored or
@@ -278,7 +273,7 @@ def main():
     start_time = time.time()
     print(f"{CYAN}{'=' * 60}{NC}")
     print(f"{GREEN}InsightEd DPA Deployment: {PM2_NAME}{NC}")
-    print(f"{CYAN}Target: {REMOTE_DIR} | Subpath: {APP_SUBPATH} | Port: {PORT}{NC}")
+    print(f"{CYAN}Target: {REMOTE_DIR} | HTML Dir: {HTML_DIR} | Subpath: {APP_SUBPATH} | Port: {PORT}{NC}")
     print(f"{CYAN}{'=' * 60}{NC}")
 
     try:
@@ -288,13 +283,11 @@ def main():
         deploy_remote()
         post_flight_verify()
     finally:
-        if os.path.exists(ARCHIVE_NAME):
-            os.remove(ARCHIVE_NAME)
-            info("Local temporary payload archive removed.")
+        recycle_local_archives()
 
     duration = time.time() - start_time
     print(f"{GREEN}{'=' * 60}{NC}")
-    success(f"Deployment to {REMOTE_DIR} complete in {duration:.2f}s!")
+    success(f"Deployment to {REMOTE_DIR} & {HTML_DIR} complete in {duration:.2f}s!")
     print(f"{GREEN}{'=' * 60}{NC}")
 
 if __name__ == '__main__':

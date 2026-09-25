@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import tarfile
+import shutil
 
 # Handle Windows console encoding for emojis
 if sys.platform == "win32":
@@ -14,6 +15,7 @@ if sys.platform == "win32":
 # --- CONFIGURATION ---
 SERVER_IP = "20.24.58.49"
 SERVER_DIR = "/mnt/insighted-dpa"
+HTML_DIR = "/var/www/html/InsightED-ROSDO/insighted-dpa"
 USER = "Administrator1"
 TAR_FILE = "dpa-deploy.tmp.tar.gz"
 PORT = 5080
@@ -47,6 +49,20 @@ SSH_OPTS = [
     "-o", "ServerAliveInterval=15",
     "-o", "ServerAliveCountMax=4"
 ]
+
+def recycle_local_archives():
+    """Recycles/removes temporary or leftover local tar.gz archives to save space."""
+    recycled_count = 0
+    for item in os.listdir("."):
+        if item.endswith(".tar.gz") or item.endswith(".tgz"):
+            try:
+                os.remove(item)
+                recycled_count += 1
+                info(f"Recycled local archive: {item}")
+            except Exception as e:
+                warn(f"Could not recycle local archive {item}: {e}")
+    if recycled_count > 0:
+        success(f"Recycled {recycled_count} local archive file(s).")
 
 def run_command(cmd, capture=False, timeout=90, retries=5, delay=3):
     cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
@@ -103,12 +119,17 @@ def pre_flight_audit():
         info(f"Port {PORT} ready.")
 
 def prepare_remote():
-    print(f"\n{YELLOW}🧹 Phase 2: Preparing remote directory {SERVER_DIR}...{NC}", flush=True)
+    print(f"\n{YELLOW}🧹 Phase 2: Preparing remote directory {SERVER_DIR} & {HTML_DIR}...{NC}", flush=True)
     ssh_target = f"{USER}@{SERVER_IP}"
-    prep_cmd = f"sudo mkdir -p {SERVER_DIR} && sudo chown -R {USER}:{USER} {SERVER_DIR} && mkdir -p {SERVER_DIR}/logs"
+    prep_cmd = (
+        f"sudo mkdir -p {SERVER_DIR} {HTML_DIR} && "
+        f"sudo chown -R {USER}:{USER} {SERVER_DIR} {HTML_DIR} && "
+        f"mkdir -p {SERVER_DIR}/logs && "
+        f"rm -f {SERVER_DIR}/*.tar.gz {SERVER_DIR}/*.tgz 2>/dev/null || true"
+    )
     ssh_cmd = ["ssh"] + SSH_OPTS + [ssh_target, prep_cmd]
     run_command(ssh_cmd, retries=5)
-    success("Remote directory prepared.")
+    success("Remote directory prepared and old archive files recycled.")
 
 def post_flight_verify():
     print(f"\n{YELLOW}🔍 Phase 5: Post-flight Verification & Auto-Revive{NC}", flush=True)
@@ -133,92 +154,93 @@ def main():
     start_time = time.time()
     print(f"{CYAN}" + "="*60 + f"{NC}", flush=True)
     print(f"{GREEN}🚀 InsightEd DPA Deployment: {PM2_NAME}{NC}", flush=True)
-    print(f"{CYAN}Target Path: {SERVER_DIR} | Port: {PORT}{NC}", flush=True)
+    print(f"{CYAN}Target Path: {SERVER_DIR} | HTML Dir: {HTML_DIR} | Port: {PORT}{NC}", flush=True)
     print(f"{CYAN}" + "="*60 + f"{NC}", flush=True)
 
-    # 1. Pre-flight
-    pre_flight_audit()
-
-    # 2. Prepare Remote Directory
-    prepare_remote()
-
-    # 3. Create Payload Archive
-    print(f"\n{YELLOW}📦 Phase 3: Building assets & creating payload archive -> {TAR_FILE}...{NC}", flush=True)
-    
-    info("Building Vite React frontend...")
-    run_command("npm run build --prefix apps/frontend", retries=1)
-    
-    info("Syncing build dist outputs...")
-    if os.path.exists("apps/frontend/dist"):
-        os.makedirs("dist", exist_ok=True)
-        import shutil
-        for item in os.listdir("apps/frontend/dist"):
-            s = os.path.join("apps/frontend/dist", item)
-            d_dist = os.path.join("dist", item)
-            d_root = item
-            if os.path.isdir(s):
-                if os.path.exists(d_dist): shutil.rmtree(d_dist)
-                if os.path.exists(d_root): shutil.rmtree(d_root)
-                shutil.copytree(s, d_dist)
-                shutil.copytree(s, d_root)
-            else:
-                shutil.copy2(s, d_dist)
-                shutil.copy2(s, d_root)
-
-    existing_includes = [item for item in INCLUDE if os.path.exists(item)]
-    
-    def exclude_filter(tarinfo):
-        name = tarinfo.name.lower()
-        if any(x in name for x in ["node_modules", ".git", ".turbo"]):
-            return None
-        return tarinfo
-
-    with tarfile.open(TAR_FILE, "w:gz") as tar:
-        for f in existing_includes:
-            tar.add(f, filter=exclude_filter)
-            info(f"       + {f}")
-            
-    success("Payload archive created.")
-
-    # 4. Upload & Deploy with Auto-Revive Retry Loop
-    print(f"\n{YELLOW}📤 Phase 4: Uploading archive and executing remote deploy in {SERVER_DIR}...{NC}", flush=True)
-    ssh_target = f"{USER}@{SERVER_IP}"
-    
-    scp_cmd = ["scp", "-q"] + SSH_OPTS + [TAR_FILE, f"{ssh_target}:{SERVER_DIR}/"]
-    run_command(scp_cmd, retries=5)
-    
-    ecosystem_remote_path = f"{SERVER_DIR}/{ECOSYSTEM_CONFIG}"
-    remote_setup = (
-        f"cd {SERVER_DIR} && "
-        f"pm2 stop {PM2_NAME} 2>/dev/null || true && "
-        f"tar -xzf {TAR_FILE} && "
-        f"sudo chown -R {USER}:{USER} {SERVER_DIR} && "
-        "export PATH=$PATH:/usr/local/bin:/home/Administrator1/.local/share/pnpm; "
-        "echo '       -> Running production npm install...' && "
-        "npm install --omit=dev --legacy-peer-deps --prefer-offline 2>&1 | tail -n 10 && "
-        f"pm2 flush {PM2_NAME} 2>/dev/null || true; "
-        f"pm2 delete {PM2_NAME} 2>/dev/null || true; "
-        f"pm2 start {ecosystem_remote_path} --update-env && "
-        f"rm -f {TAR_FILE}"
-    )
-    ssh_deploy_cmd = ["ssh"] + SSH_OPTS + [ssh_target, remote_setup]
-    run_command(ssh_deploy_cmd, retries=5, timeout=180)
-    success("Remote setup complete.")
-
-    # 5. Verify & Auto-Revive
-    post_flight_verify()
-
-    # 6. Local Cleanup
     try:
-        if os.path.exists(TAR_FILE):
-            os.remove(TAR_FILE)
-            info("Local temporary payload archive removed.")
-    except Exception:
-        pass
+        # 1. Pre-flight
+        pre_flight_audit()
+
+        # 2. Prepare Remote Directory
+        prepare_remote()
+
+        # 3. Create Payload Archive
+        print(f"\n{YELLOW}📦 Phase 3: Building assets & creating payload archive -> {TAR_FILE}...{NC}", flush=True)
+        recycle_local_archives()
+        
+        info("Building Vite React frontend...")
+        run_command("npm run build --prefix apps/frontend", retries=1)
+        
+        info("Syncing build dist outputs...")
+        if os.path.exists("apps/frontend/dist"):
+            os.makedirs("dist", exist_ok=True)
+            for item in os.listdir("apps/frontend/dist"):
+                s = os.path.join("apps/frontend/dist", item)
+                d_dist = os.path.join("dist", item)
+                d_root = item
+                if os.path.isdir(s):
+                    if os.path.exists(d_dist): shutil.rmtree(d_dist)
+                    if os.path.exists(d_root): shutil.rmtree(d_root)
+                    shutil.copytree(s, d_dist)
+                    shutil.copytree(s, d_root)
+                else:
+                    shutil.copy2(s, d_dist)
+                    shutil.copy2(s, d_root)
+
+        existing_includes = [item for item in INCLUDE if os.path.exists(item)]
+        
+        def exclude_filter(tarinfo):
+            name = tarinfo.name.lower()
+            if any(x in name for x in ["node_modules", ".git", ".turbo"]):
+                return None
+            return tarinfo
+
+        with tarfile.open(TAR_FILE, "w:gz") as tar:
+            for f in existing_includes:
+                tar.add(f, filter=exclude_filter)
+                info(f"       + {f}")
+                
+        success("Payload archive created.")
+
+        # 4. Upload & Deploy with Auto-Revive Retry Loop
+        print(f"\n{YELLOW}📤 Phase 4: Uploading archive and executing remote deploy in {SERVER_DIR}...{NC}", flush=True)
+        ssh_target = f"{USER}@{SERVER_IP}"
+        
+        scp_cmd = ["scp", "-q"] + SSH_OPTS + [TAR_FILE, f"{ssh_target}:{SERVER_DIR}/"]
+        run_command(scp_cmd, retries=5)
+        
+        ecosystem_remote_path = f"{SERVER_DIR}/{ECOSYSTEM_CONFIG}"
+        remote_setup = (
+            f"cd {SERVER_DIR} && "
+            f"pm2 stop {PM2_NAME} 2>/dev/null || true && "
+            f"tar -xzf {TAR_FILE} && "
+            f"rm -f {SERVER_DIR}/{TAR_FILE} {SERVER_DIR}/*.tar.gz {SERVER_DIR}/*.tgz 2>/dev/null || true && "
+            f"sudo chown -R {USER}:{USER} {SERVER_DIR} {HTML_DIR} && "
+            f"if [ -d {SERVER_DIR}/apps/frontend/dist ] && [ \"$(ls -A {SERVER_DIR}/apps/frontend/dist 2>/dev/null)\" ]; then "
+            f"  sudo cp -r {SERVER_DIR}/apps/frontend/dist/. {HTML_DIR}/; "
+            f"fi && "
+            "export PATH=$PATH:/usr/local/bin:/home/Administrator1/.local/share/pnpm; "
+            "echo '       -> Running production npm install...' && "
+            "npm install --omit=dev --legacy-peer-deps --prefer-offline 2>&1 | tail -n 10 && "
+            f"pm2 flush {PM2_NAME} 2>/dev/null || true; "
+            f"pm2 delete {PM2_NAME} 2>/dev/null || true; "
+            f"pm2 start {ecosystem_remote_path} --update-env && "
+            f"rm -f {SERVER_DIR}/{TAR_FILE} {SERVER_DIR}/*.tar.gz {SERVER_DIR}/*.tgz 2>/dev/null || true"
+        )
+        ssh_deploy_cmd = ["ssh"] + SSH_OPTS + [ssh_target, remote_setup]
+        run_command(ssh_deploy_cmd, retries=5, timeout=180)
+        success("Remote setup complete and archive files recycled.")
+
+        # 5. Verify & Auto-Revive
+        post_flight_verify()
+
+    finally:
+        # 6. Local Archive Recycling
+        recycle_local_archives()
 
     duration = time.time() - start_time
     print(f"\n{GREEN}" + "="*60 + f"{NC}")
-    success(f"Deployment to {SERVER_DIR} Complete in {duration:.2f}s!")
+    success(f"Deployment to {SERVER_DIR} & {HTML_DIR} Complete in {duration:.2f}s!")
     print(f"{GREEN}" + "="*60 + f"{NC}")
 
 if __name__ == "__main__":
